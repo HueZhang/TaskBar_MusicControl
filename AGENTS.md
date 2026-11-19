@@ -1,105 +1,100 @@
-# AGENTS.md — TaskbarWidget
+# AGENTS.md
 
-> AI 阅读入口。精简、可操作；深入内容见 `docs/DESIGN.md`（设计与需求）与 `README.md`（人类使用说明）。
-> 最后更新：2026-11-19。修改架构/约定时同步更新本文件。
+目标。保持这个 Windows 11 任务栏组件小而可验证。只改满足需求所需的最少代码。在真实运行的应用里证明改动有效，再报告完成。
 
-## 1. 项目是什么
+本文件优先于 `docs/DESIGN.md`。设计文档写于开发前，部分条目已过时。用户说明见 `README.md`。
 
-一个 Windows 11 任务栏小组件：把**媒体信息与控制**（SMTC）和**网速 / CPU / 内存监控**放进同一块任务栏区域。风格参考 FluentFlyout，刻意精简：无歌词、无进度条、无皮肤/历史统计/插件。仓库：`https://github.com/HueZhang/TaskBar_MusicControl.git`。
+## 产品范围
 
-## 2. 技术栈（不要随意升级或替换）
+一个任务栏区域，两页叠放。监控页显示上传、下载、CPU、内存。媒体页显示封面、标题、歌手。点击媒体页在上方弹出控制条，含上一曲、播放暂停、下一曲。右侧两个竖点指示当前页，可点击。鼠标悬停时滚轮切页。
 
-- C# / WPF，`net10.0-windows10.0.22000.0`（WinRT SMTC 需要 windows TFM）
-- WPF-UI 4.3.0（Fluent 主题/Brushes）、MicaWPF 7.1.0（保留引用）
-- Dubya.WindowsMediaController 2.5.6（SMTC 封装）
-- CommunityToolkit.Mvvm 8.4.2（`ObservableObject` / `[ObservableProperty]` / `[RelayCommand]`）
-- Win32 P/Invoke：任务栏嵌入、定位、鼠标钩子、系统采样；`System.Windows.Forms.NotifyIcon` 做托盘
-- 配置：`%APPDATA%\TaskbarWidget\settings.json`（`System.Text.Json` + 枚举字符串）
+明确不做。歌词、进度条、seek、音量、皮肤、字体颜色设置、历史统计、插件、温度、GPU、硬盘。这是边界，不是待办。
 
-## 3. 构建 / 运行 / 发布
+## 技术栈
 
-```bash
+C# 与 WPF。`net10.0-windows10.0.22000.0`。WinRT SMTC 需要这个 TFM，不要降级。
+
+NuGet 依赖四个。WPF-UI 4.3.0 提供 Fluent 主题和画刷。MicaWPF 7.1.0 保留引用，主界面不依赖它。Dubya.WindowsMediaController 2.5.6 封装 SMTC。CommunityToolkit.Mvvm 8.4.2 提供 `ObservableObject` 和 `RelayCommand`。
+
+系统交互用手写 P/Invoke。托盘用 `System.Windows.Forms.NotifyIcon`。配置存 `%APPDATA%\TaskbarWidget\settings.json`，枚举按字符串序列化。
+
+## 功能地图
+
+从用户可见功能反查入口、代码和预期结果。改完按同一路径走一遍。
+
+| 功能 | 到达路径 | 代码 | 预期结果 |
+| --- | --- | --- | --- |
+| 监控页 | 启动且无媒体播放 | `Views/MonitorPage.xaml`、`Services/SystemMonitorService.cs` | 两列两行。上传下载一列，CPU 内存一列。每秒刷新 |
+| 媒体页 | 用 SMTC 播放器放歌，悬停组件滚动或点右点 | `Services/MediaService.cs`、`Views/MediaPage.xaml`、`Services/WheelSwitchService.cs` | 第二点可用。封面显示，取不到时显示默认音符 |
+| 控制条 | 点击媒体页 | `Views/MediaFlyoutWindow.xaml`、`Services/ClickOutsideService.cs` | 从下方滑入。三个按钮。点击外部滑出。重复开合位置不下移 |
+| 左侧放置 | 托盘设置，位置选左侧 | `Services/TaskbarHost.cs` | 居中任务栏贴最左边缘。左对齐任务栏跟在最后一个程序图标后 |
+| 设置 | 托盘右键，设置 | `Views/SettingsWindow.xaml`、`ViewModels/SettingsViewModel.cs` | 保存后立即生效，无需重启 |
+| 退出 | 托盘右键，退出 | `App.xaml.cs` | 进程结束，全局钩子卸载 |
+
+## 架构不变量
+
+每条都来自一次实际失败。改动前先读证据，不要凭直觉推翻。
+
+| 不变量 | 证据 | 位置 |
+| --- | --- | --- |
+| 嵌入只走 `TaskbarHost`。`SetParent` 到 `Shell_TrayWnd`，设 `WS_CHILD`，用 `HWND_TOP` | 用 `SWP_NOZORDER` 时 Explorer 的 DesktopWindowContentBridge 盖住组件。`WS_EX_LAYERED` 会拒绝嵌入，需在 SourceInitialized 清掉 | `Services/TaskbarHost.cs` |
+| 两个窗口都不调用 `SetWindowCompositionAttribute` | 亚克力策略画的是矩形，圆角外露出直角。改用圆角半透明 `Border` | `Views/WidgetWindow.xaml.cs`、`Views/MediaFlyoutWindow.xaml.cs` |
+| 没有主题下拉。主题来自 `ApplicationThemeManager.ApplySystemTheme()` | `ThemesDictionary Theme="System"` 抛 XamlParseException | `App.xaml.cs` |
+| 控制条首次显示先 `Measure/Arrange/UpdateLayout`，动画用 `FillBehavior.Stop` | 首次布局前尺寸为 0，兜底用了旧尺寸 260x120 导致错位。`HoldEnd` 占住 `Top`，每次收起下移 8px | `Views/MediaFlyoutWindow.xaml.cs` |
+| 两个 `WH_MOUSE_LL` 钩子。回调只做矩形判断和 `Dispatcher.BeginInvoke` | 回调里做 WPF 操作会拖慢全局输入。退出必须 `Uninstall` | `Services/WheelSwitchService.cs`、`Services/ClickOutsideService.cs` |
+| 左右判断读注册表 `TaskbarAl` | 居中时 `TaskbarFrame` 横跨整条任务栏，跟图标走会把组件放到时钟上 | `Services/TaskbarHost.cs` |
+| UI 更新统一在 `WidgetViewModel` 切回 Dispatcher | 采样在 `PeriodicTimer`，钩子在输入线程 | `ViewModels/WidgetViewModel.cs` |
+| 程序化固定到开始菜单不可行 | 实测返回 `E_ACCESSDENIED`。快捷方式已建，固定需用户手动 | `App.xaml.cs` 之外的安装步骤 |
+
+## 工作规则
+
+诊断前先读相关实现。没有运行验证的解释标为假设，不要写成结论。
+
+修 bug 前先复现。改完重跑同样步骤。复现被环境挡住就说明缺什么，不要假装验证过。
+
+必须运行应用。编译通过只能证明代码能编译，证明不了组件嵌进任务栏，也证明不了控制条位置正确。优先删除，再考虑增加。选择能解决问题的最小改动。
+
+加新辅助函数前先找现有规范路径。发现过期示例和调用方，同一次改动里一起更新。
+
+同一个纠正出现第二次，说明环境有问题。把它编码成检查、类型或结构，而不是再写一段文字。文字规则排在最后。
+
+可逆工作直接做，做完报告结果。不可逆写入需要明确授权。被邀请加范围时可以说不，判断比附和重要。
+
+## 验证
+
+重建前先结束进程，exe 被占用会导致链接失败。
+
+```
+taskkill //F //IM TaskbarWidget.exe
 dotnet build TaskbarWidget.sln -c Debug
 dotnet run --project src/TaskbarWidget/TaskbarWidget.csproj -c Debug
+```
+
+发布用下面这条。
+
+```
 dotnet publish src/TaskbarWidget/TaskbarWidget.csproj -c Release -r win-x64 --self-contained false -o publish
 ```
 
-- 程序在任务栏里，修改代码后需**先杀掉运行中的实例**再编译，否则 exe 被占用：`taskkill //F //IM TaskbarWidget.exe`
-- 单实例 Mutex：`TaskbarWidget_SingleInstance`。
-- Debug 产物：`src/TaskbarWidget/bin/Debug/net10.0-windows10.0.22000.0/TaskbarWidget.exe`；发布产物：`publish/TaskbarWidget.exe`。
+按功能地图逐项走。以下是必查项。
 
-## 4. 目录职责（能力地图，文件可能变动）
+1. 无媒体时监控页可见，第二点禁用。
+2. 悬停滚轮切页。鼠标移开后滚动不影响其他窗口。
+3. 控制条第一次点击位置正确，重复开合不下移，点击外部收起。
+4. 左侧设置在居中任务栏贴最左，不压时钟。
+5. 托盘只有设置和退出。设置保存后立刻生效。
+6. 退出后进程结束。
 
-```
-App.xaml / App.xaml.cs        启动、单实例、主题跟随系统、托盘菜单、悬浮控制条的创建与定位
-Models/                       MediaState（含封面 BitmapImage）、SystemStats
-Services/
-  MediaService                SMTC 会话/属性/封面/播放控制；事件驱动，首读放线程池
-  SystemMonitorService        PeriodicTimer 轮询：网速(主网卡)、CPU(GetSystemTimes)、内存(GlobalMemoryStatusEx)
-  TaskbarHost                 把 WPF 窗口 SetParent 到 Shell_TrayWnd；定位；Explorer 重启恢复；降级悬浮窗
-  WheelSwitchService          WH_MOUSE_LL 全局钩子：光标在组件矩形内才吞掉滚轮并切页
-  ClickOutsideService         WH_MOUSE_LL 全局钩子：点击悬浮控制条以外则请求收起
-  SettingsService             settings.json 读写
-ViewModels/
-  WidgetViewModel             聚合两页数据、ActivePage、圆点状态、MediaFlyout 打开请求、媒体命令
-  SettingsViewModel           设置项（自启/位置/刷新/网卡/滚轮），保存后回调 host.SetPosition
-Views/
-  WidgetWindow                嵌入任务栏的主窗口：MonitorPage + MediaPage 叠放 + 右侧竖向圆点
-  MonitorPage                 上传/下载一列、CPU/MEM 一列（两列两行）
-  MediaPage                   封面(获取不到用默认音符图标) + 标题 + 歌手；点击请求打开控制条
-  MediaFlyoutWindow           纯控制条(上一曲/播放暂停/下一曲)；滑入淡入/滑出淡出动画
-  SettingsWindow              WPF-UI Fluent 设置窗口
-Interop/NativeMethods.cs      所有 Win32 声明与常量（窗口、钩子、 acrylic、系统采样、默认路由）
-Converters/                   速度/百分比/圆点透明度/布尔可见性/空对象可见性
-Resources/app.ico             程序与托盘图标（蓝底白色播放三角）
-docs/DESIGN.md                原始设计与需求（部分已过时，以本文件与代码为准）
-```
+## 证据与边界
 
-## 5. 架构规则（必须遵守）
+【实测】本机构建通过。发布 exe 可运行。开始菜单快捷方式已创建。程序化固定返回拒绝访问。
 
-1. **事件驱动 + Dispatcher**：所有采样/钩子回调在后台线程，更新 UI 必须切回 `Dispatcher`（`WidgetViewModel` 已统一处理）；新数据路径沿用这一约定。
-2. **两个全局钩子**：`WheelSwitchService` 和 `ClickOutsideService` 各装一个 `WH_MOUSE_LL`。回调里只做矩形判断和 `Dispatcher.BeginInvoke`，绝不 WPF 对象操作、不耗时；未命中一律 `CallNextHookEx`；`Uninstall` 在退出时必调。
-3. **任务栏嵌入只有一条路径**：`TaskbarHost` 负责 `SetParent(Shell_TrayWnd)` + `WS_CHILD` + `HWND_TOP`（不能用 `SWP_NOZORDER`，否则被 Explorer 的 DesktopWindowContentBridge 遮住）。失败才 `Fallback()` 置顶悬浮窗。不要把主窗口改成普通窗口再嵌。
-4. **首帧尺寸**：`MediaFlyoutWindow.ShowAt` 首次显示必须 `Measure/Arrange/UpdateLayout`；动画结束值用 `FillBehavior.Stop` 释放，否则每次收起都会把 `Top` 往下推 8px。
-5. **位置和主题**：
-   - 右侧 = 紧挨 `TrayNotifyWnd` 左侧；左侧 = 读注册表 `HKCU\...\Explorer\Advanced\TaskbarAl`：1(居中) 贴任务栏最左边缘；0(左对齐) 跟在最后一个 `Taskbar.TaskListButtonAutomationPeer` 图标后面。
-   - 主题跟随系统：`ApplicationThemeManager.ApplySystemTheme()`；**不要**在 App.xaml 用 `Theme="System"`（会 XAML 解析失败）。**不要**给子窗口加 `SetWindowCompositionAttribute` 亚克力（会画方块，圆角外露直角）。
-   - 无独立主题设置、无 Legacy 宽度开关、无主题下拉（已删除，别加回来）。
-6. **媒体页与控制条**：媒体页只展示信息；控制按钮只在 `MediaFlyoutWindow`。Segoe Fluent Icons：上一曲 `E892`、播放 `E768`、暂停 `E769`、下一曲 `E893`。按钮无外框（自定义 ControlTemplate，只有 hover/pressed 背景）。
+【实测】本机 UI Automation 枚举显示 `Taskbar.TaskListButtonAutomationPeer` 按钮右边界在 x=1115，`TaskbarAl` 为 1。定位逻辑依赖这个类名。
 
-## 6. 编码约定
+【推断】第三方任务栏美化工具可能改掉自动化类名或窗口层级，导致左侧定位失效。没有验证过。
 
-- 新服务类用 `sealed` + 显式 `Dispose()` 释放定时器/钩子/事件订阅；事件订阅在构造函数成对注册、在 `Dispose` 成对取消。
-- ViewModel 用 `partial class` + `[ObservableProperty]`；命令用 `[RelayCommand] private` 方法。
-- XAML 资源 key 用 PascalCase；颜色用 `#AARRGGBB`；字体图标用 `Segoe Fluent Icons`。
-- 静态 P/Invoke 全部放 `NativeMethods.cs`，不要散落在业务代码里。
-- 异常在边界吞掉并降级（SMTC 不可用、托盘图标缺失、钩子安装失败都不应崩溃），不要让它冒泡到 UI 线程。
+【未验证】多显示器、任务栏自动隐藏、任务栏在顶部或左侧。不要在这些场景下声称可用。
 
-## 7. 当前已完成（别重复做）
+## 完成报告格式
 
-- 双页重叠 + 右侧竖向圆点 + 悬停滚轮/点击圆点切页
-- 监控页两列两行（上传/下载、CPU/MEM）；主网卡默认，可指定/累加
-- 媒体页封面（默认图标兜底）+ 标题歌手；点击弹出紧凑控制条，点击外部收起，带动画
-- 任务栏嵌入/定位/居中判断/Explorer 重启恢复；托盘菜单仅「设置…/退出」；托盘图标
-- 设置：自启、位置、刷新频率、网卡、滚轮模式；主题跟随系统
-- 已发布 win-x64 非自包含版本并创建开始菜单快捷方式（固定到开始需用户手动，系统禁止程序化固定）
-
-## 8. 不要做 / 已知坑
-
-- ❌ 歌词、进度条/seek、音量控制、播放器切换、皮肤/字体/颜色设置、历史统计、插件、温度/GPU/硬盘。
-- ❌ 不要给 `WidgetWindow` / `MediaFlyoutWindow` 加 ACRYLICBLURBEHIND（矩形背景会露直角）。
-- ❌ 不要在 `App.xaml` 把 `ThemesDictionary` 设成 `System`。
-- ❌ 不要用 `SWP_NOZORDER` 定位嵌入窗口。
-- ⚠️ Win11 任务栏结构随版本/第三方美化工具变化；定位依赖 UI Automation ClassName `Taskbar.TaskListButtonAutomationPeer` 和注册表 `TaskbarAl`，改版本后要重新验证。
-- ⚠️ CPU 用差分估算，与任务管理器差 1–3% 属预期。
-- ⚠️ 自动固定到开始菜单返回 `E_ACCESSDENIED`（Windows 限制），不要再尝试程序化固定。
-
-## 9. 验证清单（改完至少跑一遍）
-
-1. `dotnet build TaskbarWidget.sln -c Debug` 零错误。
-2. 启动后无媒体显示监控页；播放 SMTC 播放器后出现第二圆点。
-3. 悬停组件滚轮切页；鼠标移开滚动不影响其他窗口。
-4. 媒体页点击弹出控制条，第一次点击位置正确；点击外部收起，位置不下移。
-5. 设置切到左侧：居中任务栏贴最左、左对齐图标时跟在最后图标后。
-6. 托盘右键只有设置/退出；设置能保存并立即生效。
-7. 退出后进程结束、全局钩子卸载。
+结果。实际运行的检查。可访问的证据。仍未验证的部分。简短，与任务规模相称。观察到的结果和推断分开写。别人报告的结果和自己检查的结果分开写。
