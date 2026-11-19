@@ -1,0 +1,38 @@
+## Build results
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Bb]uild/
+[Bb]in/
+[Oo]bj/
+
+## Visual Studio / Rider
+.vs/
+.idea/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+## NuGet
+*.nupkg
+packages/
+
+## OS files
+Thumbs.db
+desktop.ini
+
+## Local settings / credentials
+.claude/
+*.local.json
+
+## Logs and temp screenshots
+*.log
+screen*.png
+widget*.png
+verify*.png
+final.png
+check*.png

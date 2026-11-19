@@ -1,0 +1,39 @@
+<UserControl x:Class="TaskbarWidget.Views.MonitorPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:converters="clr-namespace:TaskbarWidget.Converters">
+    <UserControl.Resources>
+        <converters:SpeedConverter x:Key="Speed" />
+        <converters:PercentConverter x:Key="Percent" />
+    </UserControl.Resources>
+    <Grid Margin="8,4,8,2" VerticalAlignment="Stretch">
+        <!-- Two columns: network (upload / download) and system (CPU / memory). -->
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <TextBlock Grid.Row="0" Grid.Column="0" VerticalAlignment="Center"
+                   FontSize="12" FontFamily="Consolas" Foreground="White">
+            <Run Text="↑ " /><Run Text="{Binding UploadBps, Converter={StaticResource Speed}, Mode=OneWay}" />
+        </TextBlock>
+        <TextBlock Grid.Row="1" Grid.Column="0" VerticalAlignment="Center"
+                   FontSize="12" FontFamily="Consolas" Foreground="White">
+            <Run Text="↓ " /><Run Text="{Binding DownloadBps, Converter={StaticResource Speed}, Mode=OneWay}" />
+        </TextBlock>
+
+        <TextBlock Grid.Row="0" Grid.Column="1" VerticalAlignment="Center"
+                   FontSize="12" FontFamily="Consolas" Foreground="White">
+            <Run Text="CPU " /><Run Text="{Binding CpuPercent, Converter={StaticResource Percent}, Mode=OneWay}" />
+        </TextBlock>
+        <TextBlock Grid.Row="1" Grid.Column="1" VerticalAlignment="Center"
+                   FontSize="12" FontFamily="Consolas" Foreground="White"
+                   ToolTip="{Binding MemoryTooltip, Mode=OneWay}">
+            <Run Text="MEM " /><Run Text="{Binding MemoryPercent, Converter={StaticResource Percent}, Mode=OneWay}" />
+        </TextBlock>
+    </Grid>
+</UserControl>
